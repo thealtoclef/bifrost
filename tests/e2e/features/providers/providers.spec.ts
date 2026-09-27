@@ -80,6 +80,25 @@ test.describe("Providers", () => {
       await providersPage.selectProvider("anthropic");
       await expect(providersPage.page).toHaveURL(/provider=anthropic/);
     });
+
+    test("should render voyage as a first-party provider, not a custom one", async ({
+      providersPage,
+    }) => {
+      // The Add Provider dropdown is built from VisibleProviderNames, so a provider the Go
+      // side serves but the UI never registered cannot be added here. Before voyage was
+      // registered the option did not exist, and a voyage provider configured through
+      // config.json rendered as CUSTOM with its raw name and no icon.
+      if (!(await providersPage.providerExists("voyage"))) {
+        await providersPage.addKnownProviderFromDropdown("voyage");
+        createdProviders.push("voyage");
+      }
+
+      const providerItem = providersPage.getProviderItem("voyage");
+      await expect(providerItem).toBeVisible({ timeout: 15000 });
+      await expect(providerItem).toContainText("Voyage AI");
+      await expect(providerItem.getByText("CUSTOM", { exact: true })).toHaveCount(0);
+      await expect(providerItem.locator("svg")).not.toHaveCount(0);
+    });
   });
 
   test.describe("Provider Keys", () => {

@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 
-import { mapAppToClientApp, mapUserAgentToApp, RequestTypeColors, RequestTypeLabels, RequestTypes } from "./logs";
+import { isKeyRequiredByProvider, ModelPlaceholders } from "./config";
+import { ProviderIcons } from "./icons";
+import {
+	KnownProvidersNames,
+	mapAppToClientApp,
+	mapUserAgentToApp,
+	ProviderLabels,
+	RequestTypeColors,
+	RequestTypeLabels,
+	RequestTypes,
+} from "./logs";
+
+// Every provider in KnownProvidersNames must resolve in each display registry. Only
+// ProviderLabels and isKeyRequiredByProvider are Record<ProviderName, ...> and enforced by
+// the compiler; ProviderIcons and ModelPlaceholders are string lookups that fail silently to
+// a bare name and no icon.
+describe("known provider display registries", () => {
+	it.each(KnownProvidersNames)("resolves %s", (provider) => {
+		expect(ProviderIcons[provider]).toBeTruthy();
+		expect(ProviderLabels[provider]).toBeTruthy();
+		expect(ModelPlaceholders[provider]).toBeTruthy();
+		expect(isKeyRequiredByProvider[provider]).toBeDefined();
+	});
+});
 
 describe("logs constants", () => {
 	it("recognizes Cowork independently of Claude Code", () => {

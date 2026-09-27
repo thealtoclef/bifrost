@@ -1203,6 +1203,53 @@ func TestValidateConfigSchema_SemanticCachePlugin_ProviderWithoutEmbeddingModel(
 	}
 }
 
+// Voyage is a first-class provider (registered in schemas.StandardProviders), so every
+// provider list in the schema must name it. The providers section tolerates unknown names
+// via additionalProperties, but the semantic_cache provider list is a closed enum: omitting
+// voyage there rejects a valid config while every other provider works.
+func TestValidateConfigSchema_SemanticCachePlugin_VoyageProvider(t *testing.T) {
+	validConfig := `{
+		"plugins": [
+			{
+				"enabled": true,
+				"name": "semantic_cache",
+				"config": {
+					"provider": "voyage",
+					"embedding_model": "voyage-3.5",
+					"dimension": 1024
+				}
+			}
+		]
+	}`
+
+	err := ValidateConfigSchema([]byte(validConfig), loadLocalSchema(t))
+	if err != nil {
+		t.Errorf("expected voyage-backed semantic cache config to pass validation, got error: %v", err)
+	}
+}
+
+func TestValidateConfigSchema_VoyageProviderConfig(t *testing.T) {
+	validConfig := `{
+		"providers": {
+			"voyage": {
+				"keys": [
+					{
+						"name": "default",
+						"value": "pa-test-key",
+						"weight": 1.0,
+						"models": ["rerank-3", "voyage-3.5"]
+					}
+				]
+			}
+		}
+	}`
+
+	err := ValidateConfigSchema([]byte(validConfig), loadLocalSchema(t))
+	if err != nil {
+		t.Errorf("expected voyage provider config to pass validation, got error: %v", err)
+	}
+}
+
 func TestValidateConfigSchema_SemanticCachePlugin_DirectModeValid(t *testing.T) {
 	validConfig := `{
 		"plugins": [
