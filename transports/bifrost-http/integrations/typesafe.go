@@ -52,7 +52,10 @@ func CreateTypesafeRouteConfigs(pathPrefix string) []RouteConfig {
 			return nil, errors.New("invalid request type")
 		},
 		DecisionResponseConverter: func(ctx *schemas.BifrostContext, resp *schemas.BifrostDecisionResponse) (interface{}, error) {
-			if resp.ExtraFields.Provider == schemas.Typesafe && resp.ExtraFields.RawResponse != nil {
+			// A SystemOne provider answers in the native shape; the base type
+			// resolves a custom provider to the built-in one it wraps.
+			base, _ := ctx.Value(schemas.BifrostContextKeyBaseProviderType).(schemas.ModelProvider)
+			if base == schemas.Typesafe && resp.ExtraFields.RawResponse != nil {
 				return resp.ExtraFields.RawResponse, nil
 			}
 			return typesafe.ToTypesafeNativeDecisionResponse(resp)

@@ -14,12 +14,64 @@ const typesafeDefaultBaseURL = "https://api.typesafe.ai"
 // model field.
 const typesafeSystemOnePath = "/v1/systemone"
 
-// typesafeModel is one entry of the static model catalog.
+// typesafeModelsPath lists the models the endpoint serves. An endpoint without
+// it answers 404 or 405.
+const typesafeModelsPath = "/v1/models"
+
+// typesafeReleaseDateAttribute carries a listing's release date on the canonical
+// model, which has no field of its own for it.
+const typesafeReleaseDateAttribute = "release_date"
+
+// typesafeUpstreamModels is a model listing as a SystemOne endpoint returns it:
+// models[].name, or data[].id for the OpenAI-compatible shape.
+type typesafeUpstreamModels struct {
+	Models []typesafeUpstreamModel `json:"models"`
+	Data   []typesafeUpstreamModel `json:"data"`
+}
+
+type typesafeUpstreamModel struct {
+	Name        string `json:"name"`
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+	ReleaseDate string `json:"release_date,omitempty"`
+	Created     int64  `json:"created,omitempty"`
+}
+
+// toCatalog maps either listing shape onto catalog entries, skipping entries
+// that name no model.
+func (listing *typesafeUpstreamModels) toCatalog() []typesafeModel {
+	entries := listing.Models
+	if len(entries) == 0 {
+		entries = listing.Data
+	}
+
+	catalog := make([]typesafeModel, 0, len(entries))
+	for _, entry := range entries {
+		id := entry.Name
+		if id == "" {
+			id = entry.ID
+		}
+		if id == "" {
+			continue
+		}
+		catalog = append(catalog, typesafeModel{
+			ID:          id,
+			Name:        id,
+			Description: entry.Description,
+			ReleaseDate: entry.ReleaseDate,
+			Created:     entry.Created,
+		})
+	}
+	return catalog
+}
+
+// typesafeModel is one entry of the model catalog.
 type typesafeModel struct {
 	ID          string
 	Name        string
 	Description string
 	ReleaseDate string
+	Created     int64
 }
 
 // typesafeModels is the static catalog served by ListModels. Typesafe documents
@@ -75,13 +127,34 @@ func ToTypesafeNativeListModelsResponse(resp *schemas.BifrostListModelsResponse)
 	for _, model := range typesafeModels {
 		catalog[model.ID] = model
 	}
-	prefix := string(schemas.Typesafe) + "/"
+	// Model IDs are provider-prefixed; a custom provider serves its own name.
+	providerPrefix := string(schemas.Typesafe) + "/"
+	if provider := resp.ExtraFields.Provider; provider != "" {
+		providerPrefix = string(provider) + "/"
+	}
 	for _, model := range resp.Data {
-		name := strings.TrimPrefix(model.ID, prefix)
+		name := strings.TrimPrefix(model.ID, providerPrefix)
+		if idx := strings.Index(name, "/"); idx >= 0 {
+			// No provider name on the response: fall back to the catalog to decide
+			// whether the leading segment is the prefix.
+			if _, ok := catalog[name[idx+1:]]; ok {
+				name = name[idx+1:]
+			}
+		}
 		entry := TypesafeNativeModel{Name: name}
+		if model.Description != nil {
+			entry.Description = *model.Description
+		}
+		if releaseDate, ok := model.AdditionalAttributes[typesafeReleaseDateAttribute]; ok {
+			entry.ReleaseDate = releaseDate
+		}
 		if known, ok := catalog[name]; ok {
-			entry.Description = known.Description
-			entry.ReleaseDate = known.ReleaseDate
+			if entry.Description == "" {
+				entry.Description = known.Description
+			}
+			if entry.ReleaseDate == "" {
+				entry.ReleaseDate = known.ReleaseDate
+			}
 		}
 		native.Models = append(native.Models, entry)
 	}

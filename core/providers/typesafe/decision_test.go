@@ -805,10 +805,7 @@ func TestListModelsEntriesCarryOwnerAndDescription(t *testing.T) {
 		t.Fatalf("constructor failed: %v", err)
 	}
 	key := schemas.Key{Models: []string{"*"}}
-	resp, bifrostErr := provider.listModelsByKey(nil, key, &schemas.BifrostListModelsRequest{})
-	if bifrostErr != nil {
-		t.Fatalf("unexpected error: %v", bifrostErr)
-	}
+	resp := provider.ToBifrostListModelsResponse(typesafeModels, key, &schemas.BifrostListModelsRequest{})
 	if len(resp.Data) != len(typesafeModels) {
 		t.Fatalf("expected %d models, got %d", len(typesafeModels), len(resp.Data))
 	}

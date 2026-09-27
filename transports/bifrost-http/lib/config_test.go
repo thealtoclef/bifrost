@@ -22578,3 +22578,21 @@ func TestResolveGovernanceKeyReferences_RoutingFallbacks(t *testing.T) {
 		assert.Equal(t, schemas.Fallback{Provider: schemas.Vertex, KeyID: "k-explicit"}, governance.RoutingRules[0].ParsedFallbacks[1].Resolved())
 	})
 }
+
+// A SystemOne-compatible provider is declared with base_provider_type typesafe;
+// the base gate accepts it, and still rejects an unknown base type.
+func TestValidateCustomProviderAllowsTypesafeBase(t *testing.T) {
+	config := configstore.ProviderConfig{
+		CustomProviderConfig: &schemas.CustomProviderConfig{
+			BaseProviderType: schemas.Typesafe,
+		},
+	}
+
+	require.NoError(t, ValidateCustomProvider(config, schemas.ModelProvider("systemone")))
+
+	// Control: an unknown base type is still rejected.
+	config.CustomProviderConfig.BaseProviderType = schemas.ModelProvider("not-a-provider")
+	err := ValidateCustomProvider(config, schemas.ModelProvider("systemone"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported base_provider_type")
+}

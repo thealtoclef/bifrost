@@ -16,12 +16,13 @@ import (
 
 // TypesafeProvider implements the Provider interface for Typesafe's API.
 type TypesafeProvider struct {
-	logger              schemas.Logger        // Logger for provider operations
-	client              *fasthttp.Client      // HTTP client for unary API requests (ReadTimeout bounds overall response)
-	streamingClient     *fasthttp.Client      // HTTP client for streaming API requests (no ReadTimeout; unused today, kept per provider pattern)
-	networkConfig       schemas.NetworkConfig // Network configuration including extra headers
-	sendBackRawRequest  bool                  // Whether to include raw request in BifrostResponse
-	sendBackRawResponse bool                  // Whether to include raw response in BifrostResponse
+	logger               schemas.Logger                // Logger for provider operations
+	client               *fasthttp.Client              // HTTP client for unary API requests (ReadTimeout bounds overall response)
+	streamingClient      *fasthttp.Client              // HTTP client for streaming API requests (no ReadTimeout; unused today, kept per provider pattern)
+	networkConfig        schemas.NetworkConfig         // Network configuration including extra headers
+	customProviderConfig *schemas.CustomProviderConfig // Custom provider config
+	sendBackRawRequest   bool                          // Whether to include raw request in BifrostResponse
+	sendBackRawResponse  bool                          // Whether to include raw response in BifrostResponse
 }
 
 // NewTypesafeProvider creates a new Typesafe provider instance.
@@ -51,40 +52,116 @@ func NewTypesafeProvider(config *schemas.ProviderConfig, logger schemas.Logger) 
 	config.NetworkConfig.BaseURL = strings.TrimRight(config.NetworkConfig.BaseURL, "/")
 
 	return &TypesafeProvider{
-		logger:              logger,
-		client:              client,
-		streamingClient:     streamingClient,
-		networkConfig:       config.NetworkConfig,
-		sendBackRawRequest:  config.SendBackRawRequest,
-		sendBackRawResponse: config.SendBackRawResponse,
+		logger:               logger,
+		client:               client,
+		streamingClient:      streamingClient,
+		networkConfig:        config.NetworkConfig,
+		customProviderConfig: config.CustomProviderConfig,
+		sendBackRawRequest:   config.SendBackRawRequest,
+		sendBackRawResponse:  config.SendBackRawResponse,
 	}, nil
 }
 
-// GetProviderKey returns the provider identifier for Typesafe.
+// GetProviderKey returns the provider name; a custom provider reports its
+// configured key.
 func (provider *TypesafeProvider) GetProviderKey() schemas.ModelProvider {
-	return schemas.Typesafe
+	return providerUtils.GetProviderName(schemas.Typesafe, provider.customProviderConfig)
 }
 
-// ListModels serves the static jev catalog. Typesafe documents no model-listing
-// endpoint, so no upstream call is made; the catalog is pinned in utils.go and
-// mirrored in the hosted datasheet.
-func (provider *TypesafeProvider) ListModels(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
-	startTime := time.Now()
+// buildRequestURL constructs the full request URL using the provider's configuration.
+func (provider *TypesafeProvider) buildRequestURL(ctx *schemas.BifrostContext, defaultPath string, requestType schemas.RequestType) string {
+	path, isCompleteURL := providerUtils.GetRequestPath(ctx, defaultPath, provider.customProviderConfig, requestType)
+	if isCompleteURL {
+		return path
+	}
+	return provider.networkConfig.BaseURL + path
+}
 
-	response, err := providerUtils.HandleMultipleListModelsRequests(ctx, keys, request, provider.listModelsByKey)
-	if err != nil {
+// ListModels performs a list models request to the endpoint. Requests are made
+// concurrently for improved performance.
+func (provider *TypesafeProvider) ListModels(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	if err := providerUtils.CheckOperationAllowed(schemas.Typesafe, provider.customProviderConfig, schemas.ListModelsRequest); err != nil {
 		return nil, err
 	}
+	if provider.customProviderConfig != nil && provider.customProviderConfig.IsKeyLess {
+		return providerUtils.HandleKeylessListModelsRequest(provider.GetProviderKey(), func() (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+			return provider.listModelsByKey(ctx, schemas.Key{Models: schemas.WhiteList{"*"}}, request)
+		})
+	}
+	return providerUtils.HandleMultipleListModelsRequests(
+		ctx,
+		keys,
+		request,
+		provider.listModelsByKey,
+	)
+}
 
-	response.ExtraFields.Latency = time.Since(startTime).Milliseconds()
+// listModelsByKey performs a list models request for a single key.
+func (provider *TypesafeProvider) listModelsByKey(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
+	req.SetRequestURI(provider.buildRequestURL(ctx, typesafeModelsPath, schemas.ListModelsRequest))
+	req.Header.SetMethod(http.MethodGet)
+	req.Header.SetContentType("application/json")
+	if key.Value.GetValue() != "" {
+		req.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
+	}
+
+	latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, req, resp)
+	defer wait()
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+
+	// Stored before the status check so error responses also forward them.
+	ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, providerUtils.ExtractProviderResponseHeaders(resp))
+
+	// An endpoint without a listing answers 404 or 405; the models are then
+	// whatever the provider pins.
+	if resp.StatusCode() == fasthttp.StatusNotFound || resp.StatusCode() == fasthttp.StatusMethodNotAllowed {
+		response := provider.ToBifrostListModelsResponse(typesafeModels, key, request)
+		response.ExtraFields.Latency = latency.Milliseconds()
+		return response, nil
+	}
+	if resp.StatusCode() != fasthttp.StatusOK {
+		return nil, providerUtils.SetErrorLatency(parseTypesafeError(resp), latency)
+	}
+
+	body, err := providerUtils.CheckAndDecodeBody(resp)
+	if err != nil {
+		return nil, providerUtils.NewBifrostOperationError(schemas.ErrProviderResponseDecode, err)
+	}
+
+	var listing typesafeUpstreamModels
+	rawRequest, rawResponse, bifrostErr := providerUtils.HandleProviderResponse(body, &listing, nil,
+		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
+		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse))
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+
+	response := provider.ToBifrostListModelsResponse(listing.toCatalog(), key, request)
+	response.ExtraFields.Latency = latency.Milliseconds()
+	if providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest) {
+		response.ExtraFields.RawRequest = rawRequest
+	}
+	if providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse) {
+		response.ExtraFields.RawResponse = rawResponse
+	}
+
 	return response, nil
 }
 
-// listModelsByKey filters the static catalog through the standard list-models
-// pipeline so key whitelists, blacklists, and aliases apply.
-func (provider *TypesafeProvider) listModelsByKey(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+// ToBifrostListModelsResponse converts an endpoint listing into the Bifrost
+// shape. The catalog goes through the standard list-models pipeline so key
+// whitelists, blacklists, and aliases apply.
+func (provider *TypesafeProvider) ToBifrostListModelsResponse(catalog []typesafeModel, key schemas.Key, request *schemas.BifrostListModelsRequest) *schemas.BifrostListModelsResponse {
 	response := &schemas.BifrostListModelsResponse{
-		Data: make([]schemas.Model, 0, len(typesafeModels)),
+		Data: make([]schemas.Model, 0, len(catalog)),
 	}
 
 	pipeline := &providerUtils.ListModelsPipeline{
@@ -96,11 +173,11 @@ func (provider *TypesafeProvider) listModelsByKey(ctx *schemas.BifrostContext, k
 		MatchFns:          providerUtils.DefaultMatchFns(),
 	}
 	if pipeline.ShouldEarlyExit() {
-		return response, nil
+		return response
 	}
 
 	included := make(map[string]bool)
-	for _, model := range typesafeModels {
+	for _, model := range catalog {
 		for _, result := range pipeline.FilterModel(model.ID) {
 			name := model.Name
 			description := model.Description
@@ -108,7 +185,13 @@ func (provider *TypesafeProvider) listModelsByKey(ctx *schemas.BifrostContext, k
 				ID:          string(provider.GetProviderKey()) + "/" + result.ResolvedID,
 				Name:        &name,
 				Description: &description,
-				OwnedBy:     new("typesafe"),
+				OwnedBy:     new(string(provider.GetProviderKey())),
+			}
+			if model.ReleaseDate != "" {
+				entry.AdditionalAttributes = map[string]string{typesafeReleaseDateAttribute: model.ReleaseDate}
+			}
+			if model.Created != 0 {
+				entry.Created = &model.Created
 			}
 			if result.AliasValue != "" {
 				alias := result.AliasValue
@@ -120,7 +203,7 @@ func (provider *TypesafeProvider) listModelsByKey(ctx *schemas.BifrostContext, k
 	}
 	response.Data = append(response.Data, pipeline.BackfillModels(included)...)
 
-	return response, nil
+	return response
 }
 
 // Decision performs a synchronous evaluation against POST /v1/systemone.
@@ -144,7 +227,7 @@ func (provider *TypesafeProvider) Decision(ctx *schemas.BifrostContext, key sche
 	defer fasthttp.ReleaseResponse(resp)
 
 	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
-	req.SetRequestURI(provider.networkConfig.BaseURL + providerUtils.GetPathFromContext(ctx, typesafeSystemOnePath))
+	req.SetRequestURI(provider.buildRequestURL(ctx, typesafeSystemOnePath, schemas.DecisionRequest))
 	req.Header.SetMethod(http.MethodPost)
 	req.Header.SetContentType("application/json")
 	if key.Value.GetValue() != "" {

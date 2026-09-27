@@ -72,6 +72,7 @@ export function AddCustomProviderSheetContent({ show = true, onClose, onSave }: 
 				image_edit_stream: true,
 				image_variation: true,
 				rerank: true,
+				decisions: true,
 				ocr: true,
 				ocr_stream: true,
 				video_generation: true,
@@ -199,6 +200,7 @@ export function AddCustomProviderSheetContent({ show = true, onClose, onSave }: 
 													<SelectItem value="cohere">Cohere</SelectItem>
 													<SelectItem value="bedrock">AWS Bedrock</SelectItem>
 													<SelectItem value="replicate">Replicate</SelectItem>
+													<SelectItem value="typesafe">TypeSafe (SystemOne)</SelectItem>
 												</SelectContent>
 											</Select>
 										</FormControl>
