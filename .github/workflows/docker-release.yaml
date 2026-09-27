@@ -1,0 +1,34 @@
+name: Release Docker Image
+
+on:
+  workflow_dispatch: # for manual testing
+    inputs:
+      runs_on:
+        description: "Runs on"
+        default: self-hosted
+        required: false
+        type: string
+      platforms:
+        description: "Platforms to build for"
+        default: linux/amd64
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - "**/version.txt"
+
+jobs:
+  call-docker-release:
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+    uses: thealtoclef/modular-automations/.github/workflows/docker-release.yaml@main
+    with:
+      runs_on: ${{ github.event.inputs.runs_on || 'self-hosted' }}
+      platforms: ${{ github.event.inputs.platforms || 'linux/amd64' }}
+      context_dir: "."
+      dockerfile_path: "transports/Dockerfile.local"
+      force_build: true
