@@ -98766,6 +98766,10 @@
               }
             }
           },
+          "supports_reasoning": {
+            "type": "boolean",
+            "description": "Reasoning support from the Bifrost datasheet. Omitted when unknown."
+          },
           "hugging_face_id": {
             "type": "string"
           },

@@ -3491,6 +3491,36 @@ func TestUpsertModelPricesBatch_TimeOfDayColumns_SurviveResync(t *testing.T) {
 	assert.Equal(t, "05:00", row.PeakHours.Windows[0].End)
 }
 
+func TestUpsertModelPricesBatch_SupportsReasoning_SurvivesResync(t *testing.T) {
+	// Regression for pricingSyncUpdateColumns: a column missing from that list
+	// inserts fine, then reverts to null on the second sync. The value is
+	// flipped between upserts so a stale column cannot pass by coincidence.
+	s := setupRDBTestStore(t)
+	require.NoError(t, s.DB().AutoMigrate(&tables.TableModelPricing{}))
+
+	ctx := context.Background()
+	boolPtr := func(v bool) *bool { return &v }
+
+	pricing := []tables.TableModelPricing{
+		{
+			Model:             "deepseek-v4.1-flash",
+			Provider:          "opencode-go",
+			Mode:              "chat",
+			SupportsReasoning: boolPtr(true),
+		},
+	}
+	require.NoError(t, s.UpsertModelPricesBatch(ctx, pricing))
+
+	pricing[0].SupportsReasoning = boolPtr(false)
+	require.NoError(t, s.UpsertModelPricesBatch(ctx, pricing))
+
+	got, err := s.GetModelPrices(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].SupportsReasoning)
+	assert.False(t, *got[0].SupportsReasoning, "supports_reasoning should take the resynced value")
+}
+
 func TestUpsertModelParametersBatch_SQLite(t *testing.T) {
 	s := setupRDBTestStore(t)
 	require.NoError(t, s.DB().AutoMigrate(&tables.TableModelParameters{}))

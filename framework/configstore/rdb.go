@@ -2787,6 +2787,7 @@ var pricingSyncUpdateColumns = []string{
 	"max_output_tokens",
 	"architecture",
 	"is_deprecated",
+	"supports_reasoning",
 	// Costs - Text
 	"input_cost_per_token",
 	"output_cost_per_token",

@@ -47,6 +47,8 @@ type Entry struct {
 	MaxOutputTokens *int                  `json:"max_output_tokens,omitempty"`
 	Architecture    *schemas.Architecture `json:"architecture,omitempty"`
 	IsDeprecated    bool                  `json:"is_deprecated,omitempty"`
+	// SupportsReasoning is the datasheet's supports_reasoning flag.
+	SupportsReasoning *bool `json:"supports_reasoning,omitempty"`
 
 	// AdditionalAttributes carries editorial metadata stored on the pricing
 	// row (e.g. description). Populated from the DB read path only; the
@@ -673,6 +675,8 @@ func convertEntryToTablePricing(modelKey string, entry Entry) configstoreTables.
 		Architecture:    entry.Architecture,
 		IsDeprecated:    entry.IsDeprecated,
 
+		SupportsReasoning: entry.SupportsReasoning,
+
 		InputCostPerToken:                         entry.InputCostPerToken,
 		OutputCostPerToken:                        entry.OutputCostPerToken,
 		InputCostPerTokenBatches:                  entry.InputCostPerTokenBatches,
@@ -922,6 +926,7 @@ func convertTablePricingToEntry(pricing *configstoreTables.TableModelPricing) *E
 		MaxOutputTokens:      pricing.MaxOutputTokens,
 		Architecture:         pricing.Architecture,
 		IsDeprecated:         pricing.IsDeprecated,
+		SupportsReasoning:    pricing.SupportsReasoning,
 		AdditionalAttributes: pricing.AdditionalAttributes,
 		Options:              options,
 	}

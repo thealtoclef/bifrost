@@ -22,6 +22,7 @@ func modelInfoCatalog(t *testing.T) *ModelCatalog {
 			"base_model": "claude-opus-5",
 			"max_input_tokens": 200000,
 			"max_output_tokens": 64000,
+			"supports_reasoning": true,
 			"input_cost_per_token": 0.000005,
 			"output_cost_per_token": 0.000025,
 			"cache_read_input_token_cost": 0.0000005,
@@ -110,6 +111,27 @@ func TestGetModelInfoPopulatesPricingAndLimits(t *testing.T) {
 	}
 }
 
+func TestGetModelInfoReportsSupportsReasoning(t *testing.T) {
+	mc := modelInfoCatalog(t)
+
+	info := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5")
+	if info == nil {
+		t.Fatal("GetModelInfo = nil, want populated model")
+	}
+	if info.SupportsReasoning == nil || !*info.SupportsReasoning {
+		t.Errorf("SupportsReasoning = %v, want true", info.SupportsReasoning)
+	}
+
+	// Unset, not false: callers distinguish "no" from "unknown".
+	info = mc.GetModelInfo(schemas.Anthropic, "retired-model")
+	if info == nil {
+		t.Fatal("GetModelInfo = nil, want populated model")
+	}
+	if info.SupportsReasoning != nil {
+		t.Errorf("SupportsReasoning = %v, want nil for a row without the flag", info.SupportsReasoning)
+	}
+}
+
 func TestGetModelInfoReportsDeprecation(t *testing.T) {
 	mc := modelInfoCatalog(t)
 
@@ -143,11 +165,13 @@ func TestApplyModelInfoDoesNotOverwriteProviderValues(t *testing.T) {
 	}
 
 	providerReported := 999
+	providerReasoning := false
 	model := &schemas.Model{
-		ID:             "claude-opus-5",
-		ContextLength:  &providerReported,
-		MaxInputTokens: &providerReported,
-		Pricing:        &schemas.Pricing{},
+		ID:                "claude-opus-5",
+		ContextLength:     &providerReported,
+		MaxInputTokens:    &providerReported,
+		SupportsReasoning: &providerReasoning,
+		Pricing:           &schemas.Pricing{},
 	}
 	ApplyModelInfo(model, entry)
 
@@ -163,6 +187,10 @@ func TestApplyModelInfoDoesNotOverwriteProviderValues(t *testing.T) {
 	// Fields the provider left empty still get filled.
 	if model.MaxOutputTokens == nil || *model.MaxOutputTokens != 64000 {
 		t.Errorf("MaxOutputTokens = %v, want backfilled 64000", model.MaxOutputTokens)
+	}
+	// Provider-reported value wins, even a false one.
+	if model.SupportsReasoning == nil || *model.SupportsReasoning {
+		t.Errorf("SupportsReasoning = %v, want provider-reported false left intact", model.SupportsReasoning)
 	}
 }
 

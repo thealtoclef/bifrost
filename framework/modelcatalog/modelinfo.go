@@ -65,6 +65,10 @@ func ApplyModelInfo(model *schemas.Model, entry *PricingEntry) {
 
 	model.IsDeprecated = model.IsDeprecated || entry.IsDeprecated
 
+	if entry.SupportsReasoning != nil && model.SupportsReasoning == nil {
+		model.SupportsReasoning = new(*entry.SupportsReasoning)
+	}
+
 	if entry.BaseModel != "" && model.NormalizedName == nil {
 		model.NormalizedName = new(providerUtils.NormalizeBaseModelSlug(entry.BaseModel))
 	}

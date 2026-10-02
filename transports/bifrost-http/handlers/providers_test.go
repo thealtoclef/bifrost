@@ -644,6 +644,36 @@ func TestEnrichListModelsResponse_MarksDeprecatedPricingRows(t *testing.T) {
 	}
 }
 
+func TestEnrichListModelsResponse_PropagatesSupportsReasoning(t *testing.T) {
+	// Catalog value fills the gap; a provider-reported one is left alone.
+	catalog := modelCatalogForPricingJSON(t, []byte(`{
+		"reasoning-model": {"provider":"openai","mode":"chat","base_model":"reasoning-model","supports_reasoning":true},
+		"plain-model": {"provider":"openai","mode":"chat","base_model":"plain-model"}
+	}`))
+	providerReported := true
+	resp := &schemas.BifrostListModelsResponse{Data: []schemas.Model{
+		{ID: "openai/reasoning-model"},
+		{ID: "openai/plain-model"},
+		{ID: "openai/provider-said-so", SupportsReasoning: &providerReported},
+	}}
+
+	enrichListModelsResponse(resp, catalog)
+
+	byID := map[string]schemas.Model{}
+	for _, m := range resp.Data {
+		byID[m.ID] = m
+	}
+	if m := byID["openai/reasoning-model"]; m.SupportsReasoning == nil || !*m.SupportsReasoning {
+		t.Fatalf("catalog supports_reasoning should be propagated: %#v", m.SupportsReasoning)
+	}
+	if m := byID["openai/plain-model"]; m.SupportsReasoning != nil {
+		t.Fatalf("model without the flag should leave it unset: %#v", m.SupportsReasoning)
+	}
+	if m := byID["openai/provider-said-so"]; m.SupportsReasoning == nil || !*m.SupportsReasoning {
+		t.Fatalf("provider-reported flag should be preserved: %#v", m.SupportsReasoning)
+	}
+}
+
 func TestListModels_UnfilteredIgnoresKeys(t *testing.T) {
 	SetLogger(&mockLogger{})
 

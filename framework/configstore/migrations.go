@@ -435,6 +435,7 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_dump_errors_in_console_logs_column"}, run: migrationAddDumpErrorsInConsoleLogsColumn},
 	{IDs: []string{"add_bedrock_mantle_key_columns"}, run: migrationAddBedrockMantleKeyColumns},
 	{IDs: []string{"add_model_pricing_is_deprecated_column"}, run: migrationAddModelPricingIsDeprecatedColumn},
+	{IDs: []string{"add_model_pricing_supports_reasoning_column"}, run: migrationAddModelPricingSupportsReasoningColumn},
 	{IDs: []string{"add_mcp_client_tool_execution_timeout_column"}, run: migrationAddMCPClientToolExecutionTimeoutColumn},
 	{IDs: []string{"add_virtual_key_expires_at_column"}, run: migrationAddVirtualKeyExpiresAtColumn},
 	{IDs: []string{"add_fast_mode_cache_pricing_columns"}, run: migrationAddFastModeCachePricingColumns},
@@ -10772,6 +10773,32 @@ func migrationAddModelPricingIsDeprecatedColumn(ctx context.Context, db *gorm.DB
 	return nil
 }
 
+// migrationAddModelPricingSupportsReasoningColumn adds supports_reasoning to
+// governance_model_pricing. The pricing sync writes and reloads that column, so
+// a database without it cannot boot the catalog.
+func migrationAddModelPricingSupportsReasoningColumn(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_model_pricing_supports_reasoning_column"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := addColumnIfNotExists(tx, logger, &tables.TableModelPricing{}, "SupportsReasoning"); err != nil {
+				return fmt.Errorf("failed to add supports_reasoning column: %w", err)
+			}
+			return nil
+		},
+		Rollback: func(*gorm.DB) error {
+			return fmt.Errorf("add_model_pricing_supports_reasoning_column is non-rollbackable: dropping the column fails a running binary's pricing reload")
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error running %s migration: %s", migrationName, err.Error())
+	}
+	return nil
+}
+
 // migrationAddCustomerCalendarAlignedColumn adds calendar_aligned to governance_customers
 // so customer-level calendar alignment can be persisted. No backfill is needed: the
 // legacy per-budget/per-rate-limit calendar_aligned columns were dropped by
@@ -13591,13 +13618,13 @@ func migrationMigrateVKStandaloneLimitsToModelConfigs(ctx context.Context, db *g
 
 			// Find all budgets owned directly by a VK (old config.json flow).
 			type standaloneVKBudget struct {
-				ID           string
-				VirtualKeyID string
-				MaxLimit     float64
+				ID            string
+				VirtualKeyID  string
+				MaxLimit      float64
 				ResetDuration string
-				CurrentUsage float64
-				LastReset    time.Time
-				ConfigHash   string
+				CurrentUsage  float64
+				LastReset     time.Time
+				ConfigHash    string
 			}
 			var standaloneBudgets []standaloneVKBudget
 			if err := tx.Raw(`
@@ -13771,4 +13798,3 @@ func migrationMigrateVKStandaloneLimitsToModelConfigs(ctx context.Context, db *g
 	}
 	return nil
 }
-

@@ -164,8 +164,11 @@ type Model struct {
 	SupportedParameters []string           `json:"supported_parameters,omitempty"`
 	DefaultParameters   *DefaultParameters `json:"default_parameters,omitempty"`
 	Reasoning           *ModelReasoning    `json:"reasoning,omitempty"`
-	HuggingFaceID       *string            `json:"hugging_face_id,omitempty"`
-	Description         *string            `json:"description,omitempty"`
+	// SupportsReasoning is the datasheet flag; Reasoning above is only what the
+	// provider's own list-models response carried.
+	SupportsReasoning *bool   `json:"supports_reasoning,omitempty"`
+	HuggingFaceID     *string `json:"hugging_face_id,omitempty"`
+	Description       *string `json:"description,omitempty"`
 
 	// AdditionalAttributes carries editorial per-model metadata stored on the
 	// governance_model_pricing row (e.g. description, tags). Preserved across
